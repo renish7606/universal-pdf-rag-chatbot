@@ -46,31 +46,31 @@ Unlike naive RAG pipelines, this system introduces:
 
 ```mermaid
 flowchart TD
-    %% Styling
-    classDef input fill:#E0F2FE,stroke:#0284C7,stroke-width:2px,color:#0369A1;
-    classDef process fill:#F3E8FF,stroke:#9333EA,stroke-width:2px,color:#6B21A8;
-    classDef storage fill:#FEF3C7,stroke:#D97706,stroke-width:2px,color:#92400E;
-    classDef graph fill:#DCFCE7,stroke:#16A34A,stroke-width:2px,color:#15803D;
-    classDef output fill:#FFE4E6,stroke:#E11D48,stroke-width:2px,color:#9F1239;
+    classDef inputNode  fill:#E0F2FE,stroke:#0284C7,stroke-width:2px,color:#0369A1
+    classDef procNode   fill:#F3E8FF,stroke:#9333EA,stroke-width:2px,color:#6B21A8
+    classDef storeNode  fill:#FEF3C7,stroke:#D97706,stroke-width:2px,color:#92400E
+    classDef wfNode     fill:#DCFCE7,stroke:#16A34A,stroke-width:2px,color:#15803D
+    classDef outNode    fill:#FFE4E6,stroke:#E11D48,stroke-width:2px,color:#9F1239
 
-    subgraph INGESTION ["📥 Document Ingestion Pipeline"]
-        A["📄 Uploaded PDF Document"]:::input --> B["PyPDFLoader + TOC Filtering + Chapter Detection"]:::process
-        B --> C["RecursiveCharacterTextSplitter (1000 chars, 150 overlap)"]:::process
-        C --> D["sentence-transformers/all-MiniLM-L6-v2 Embeddings"]:::process
-        D --> E[("ChromaDB Vector Store\n(Isolated by PDF Hash)")]:::storage
+    subgraph INGESTION ["Document Ingestion Pipeline"]
+        A["Uploaded PDF"]:::inputNode --> B["PyPDFLoader + TOC Filter + Chapter Detection"]:::procNode
+        B --> C["RecursiveCharacterTextSplitter\n1000 chars, 150 overlap"]:::procNode
+        C --> D["HuggingFace Embeddings\nall-MiniLM-L6-v2"]:::procNode
+        D --> E[("ChromaDB Vector Store\nIsolated by PDF Hash")]:::storeNode
     end
 
-    subgraph RETRIEVAL_WORKFLOW ["🧠 LangGraph Conversational Workflow"]
-        U["👤 User Question"]:::input --> N1["Node 1: rewrite_question\n(Resolves conversational pronouns)"]:::graph
-        M[("MemorySaver Checkpointer\n(Session History)")]:::storage <--> N1
-        N1 --> N2["Node 2: retrieve_documents\n(MMR: k=8, fetch_k=24, lambda=0.5)"]:::graph
+    subgraph WORKFLOW ["LangGraph Conversational Workflow"]
+        U["User Question"]:::inputNode --> N1["rewrite_question\nResolves pronouns via history"]:::wfNode
+        M[("MemorySaver\nCheckpointer")]:::storeNode --> N1
+        N1 --> M
+        N1 --> N2["retrieve_documents\nMMR k=8, fetch_k=24, lambda=0.5"]:::wfNode
         E -.->|Semantic Search| N2
-        N2 --> N3["Node 3: generate_answer\n(Ollama: llama3.2:3b locally)"]:::graph
+        N2 --> N3["generate_answer\nOllama llama3.2:3b local"]:::wfNode
     end
 
-    subgraph OUTPUT_STREAM ["💬 Real-Time Streaming UI"]
-        N3 --> O1["Streamlit Live Token Streaming (▌ Cursor)"]:::output
-        N3 --> O2["📚 Verified Collapsible Source Citations"]:::output
+    subgraph OUTPUT ["Streamlit Streaming UI"]
+        N3 --> O1["Live Token Streaming"]:::outNode
+        N3 --> O2["Collapsible Page Citations"]:::outNode
     end
 ```
 
@@ -141,7 +141,35 @@ RAG/
 
 ---
 
+## 🚀 Quick Start Guide
 
+### 1. Prerequisites (Ollama Local Model)
+Ensure [Ollama](https://ollama.com/) is installed and running on your system:
+```bash
+ollama pull llama3.2:3b
+ollama serve
+```
+
+### 2. Setup Virtual Environment
+
+**Windows (PowerShell):**
+```powershell
+python -m venv .venv
+.venv\Scripts\Activate.ps1
+```
+
+### 3. Install Dependencies
+```bash
+pip install -r requirements.txt
+```
+
+### 4. Run Application
+```bash
+streamlit run app.py
+```
+Open your browser to `http://localhost:8501`, upload your PDF in the sidebar, click **Process PDF**, and start chatting!
+
+---
 
 ## 👤 Author & Contact
 
