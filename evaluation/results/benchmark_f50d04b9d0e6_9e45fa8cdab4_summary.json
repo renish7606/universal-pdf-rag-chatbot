@@ -1,0 +1,25 @@
+{
+  "row": "Row 0 \u2014 4096-token context baseline",
+  "configuration": {
+    "model": "llama3.2:3b",
+    "judge_model": "llama3.2:3b",
+    "context_window": 4096,
+    "top_k": 8
+  },
+  "denominators": {
+    "retrieval_hit_rate_at_8": 50,
+    "answer_metrics": 51,
+    "latency": 60
+  },
+  "metrics": {
+    "retrieval_hit_rate_at_8": 0.76,
+    "average_answer_score": 1.6666666666666667,
+    "fully_correct_and_grounded": 0.7450980392156863
+  },
+  "latency_seconds": {
+    "retrieval_seconds": 0.804401273332769,
+    "time_to_first_token_seconds": 43.0153348966686,
+    "generation_seconds": 65.4046237783361
+  },
+  "judge_note": "Same-model judge: not independent."
+}

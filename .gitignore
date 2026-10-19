@@ -4,4 +4,5 @@ __pycache__/
 .env
 chroma_db/
 data/uploads/
+/ml_ebook.pdf
 .ipynb_checkpoints/

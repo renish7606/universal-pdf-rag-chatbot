@@ -1,0 +1,16 @@
+{
+  "row": "Historical notebook run (context size not explicitly set)",
+  "configuration": {
+    "model": "llama3.2:3b",
+    "retrieval": "MMR k=8, fetch_k=24, lambda=0.5",
+    "context_window": "not explicitly set"
+  },
+  "metrics": {
+    "retrieval_hit_rate_at_8": {"value": 0.76, "numerator": 38, "denominator": 50, "scope": "answerable questions only"},
+    "average_answer_score": {"value": 1.4912280702, "numerator": 85, "denominator": 57, "scope": "valid local-judge outputs only; 3 of 60 were unscored"},
+    "fully_correct_and_grounded": {"value": 0.5614035088, "numerator": 32, "denominator": 57, "scope": "valid local-judge outputs only; corrected from the notebook's inconsistent /60 denominator"}
+  },
+  "latency": null,
+  "judge": "llama3.2:3b local Ollama, the same model family used for answer generation; not an independent judge.",
+  "status": "Historical record. Not directly comparable to Row 0 because the context window was not explicitly set."
+}

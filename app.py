@@ -292,6 +292,7 @@ with st.sidebar:
             st.warning(ollama_msg)
         st.caption(f"**Embeddings:** `{rag.EMBEDDING_MODEL}`")
         st.caption(f"**LLM:** `{rag.OLLAMA_MODEL}`")
+        st.caption(f"**Context window:** `{rag.OLLAMA_NUM_CTX}` tokens")
 
 
 # -------------------------------------------------------------

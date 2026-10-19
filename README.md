@@ -109,12 +109,17 @@ flowchart TD
 
 | Metric | Score | Details |
 | :--- | :---: | :--- |
-| **Questions Evaluated** | **60** | Multi-topic comprehensive test set |
-| **Retrieval Hit Rate** | **76.00%** | Relevant source page present in retrieved MMR context |
-| **Average Answer Score** | **1.49 / 2.00** | Evaluated via LLM Judge (Correctness + Groundedness) |
-| **Fully Correct & Grounded** | **53.33%** | Strict adherence with zero hallucinated claims |
+| **Questions in frozen benchmark** | **60** | 50 answerable; 10 deliberately out of document |
+| **Row 0 retrieval hit rate@8** | **76.00% (38/50)** | Answerable questions with an expected page only |
+| **Row 0 average answer score** | **1.67 / 2.00 (85/51)** | Nine judge outputs were invalid and excluded |
+| **Row 0 fully correct & grounded** | **74.51% (38/51)** | Valid judge outputs only |
+| **Average retrieval latency** | **0.80 s (60 questions)** | All benchmark questions |
+| **Average time to first token** | **43.02 s (60 questions)** | All benchmark questions |
+| **Average generation time** | **65.40 s (60 questions)** | All benchmark questions |
 
 </div>
+
+Row 0 uses an explicit 4096-token context window. The judge was the same local `llama3.2:3b` model used to generate answers, so its scores are not independent. Nine answers received no valid judge score and are excluded from answer metrics; retrieval and latency denominators are shown separately. The historical notebook result is retained in [`row0_legacy.json`](evaluation/results/row0_legacy.json); the measured run and per-question cache are in [`row0.json`](evaluation/results/row0.json) and [`benchmark_f50d04b9d0e6_9e45fa8cdab4.json`](evaluation/results/benchmark_f50d04b9d0e6_9e45fa8cdab4.json). Reproduce with `python evaluation/run_benchmark.py --pdf .\ml_ebook.pdf`. See [`evaluation/README.md`](evaluation/README.md).
 
 ---
 
@@ -138,36 +143,6 @@ RAG/
 ├── README.md                  # Project documentation & architecture
 └── .gitignore                 # Version control rules
 ```
-
----
-
-## 🚀 Quick Start Guide
-
-### 1. Prerequisites (Ollama Local Model)
-Ensure [Ollama](https://ollama.com/) is installed and running on your system:
-```bash
-ollama pull llama3.2:3b
-ollama serve
-```
-
-### 2. Setup Virtual Environment
-
-**Windows (PowerShell):**
-```powershell
-python -m venv .venv
-.venv\Scripts\Activate.ps1
-```
-
-### 3. Install Dependencies
-```bash
-pip install -r requirements.txt
-```
-
-### 4. Run Application
-```bash
-streamlit run app.py
-```
-Open your browser to `http://localhost:8501`, upload your PDF in the sidebar, click **Process PDF**, and start chatting!
 
 ---
 

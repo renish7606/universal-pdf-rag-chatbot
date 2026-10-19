@@ -1,0 +1,29 @@
+{
+  "row": "Row 0 — 4096-token context baseline",
+  "source_result": "benchmark_f50d04b9d0e6_9e45fa8cdab4_summary.json",
+  "configuration": {
+    "answer_model": "llama3.2:3b",
+    "judge_model": "llama3.2:3b",
+    "context_window_tokens": 4096,
+    "retrieval": "MMR k=8, fetch_k=24, lambda=0.5"
+  },
+  "denominators": {
+    "retrieval_hit_rate_at_8": 50,
+    "answer_score_metrics": 51,
+    "latency_averages": 60
+  },
+  "metrics": {
+    "retrieval_hit_rate_at_8": {"value": 0.76, "numerator": 38, "denominator": 50},
+    "average_answer_score": {"value": 1.6666666667, "numerator": 85, "denominator": 51, "scale": "0 to 2"},
+    "fully_correct_and_grounded": {"value": 0.7450980392, "numerator": 38, "denominator": 51}
+  },
+  "latency_seconds": {
+    "average_retrieval": 0.8044012733,
+    "average_time_to_first_token": 43.0153348967,
+    "average_generation": 65.4046237783,
+    "question_denominator": 60
+  },
+  "judge_note": "The judge and answer generator are the same local llama3.2:3b model, so the ratings are not independent.",
+  "unscored_judgments": 9,
+  "source_pdf_sha256_prefix": "f50d04b9d0e6"
+}

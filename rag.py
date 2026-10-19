@@ -49,6 +49,7 @@ from langgraph.checkpoint.memory import MemorySaver
 # CONFIGURATION & CONSTANTS (PRESERVED FROM NOTEBOOK)
 # ============================================================
 OLLAMA_MODEL = "llama3.2:3b"
+OLLAMA_NUM_CTX = 4096
 EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 TOP_K = 8
 FETCH_K = 24
@@ -237,6 +238,18 @@ def compute_pdf_hash(pdf_path: str | Path) -> str:
 _cached_embeddings: Optional[HuggingFaceEmbeddings] = None
 
 
+def get_ollama_base_url() -> str:
+    """Prefer the runtime-configured Ollama URL, otherwise fall back to localhost."""
+    for env_key in ("OLLAMA_HOST", "OLLAMA_BASE_URL"):
+        value = os.environ.get(env_key)
+        if value:
+            cleaned = value.strip().rstrip("/")
+            if "//" not in cleaned:
+                cleaned = f"http://{cleaned}"
+            return cleaned
+    return "http://localhost:11434"
+
+
 def get_embeddings(model_name: str = EMBEDDING_MODEL) -> HuggingFaceEmbeddings:
     """Load or return cached HuggingFace embeddings model."""
     global _cached_embeddings
@@ -249,8 +262,13 @@ def get_embeddings(model_name: str = EMBEDDING_MODEL) -> HuggingFaceEmbeddings:
 
 
 def get_llm(model_name: str = OLLAMA_MODEL, temperature: float = 0) -> ChatOllama:
-    """Return ChatOllama LLM instance."""
-    return ChatOllama(model=model_name, temperature=temperature)
+    """Return ChatOllama with an explicit context window for retrieved text."""
+    return ChatOllama(
+        model=model_name,
+        temperature=temperature,
+        num_ctx=OLLAMA_NUM_CTX,
+        base_url=get_ollama_base_url(),
+    )
 
 
 def check_ollama_status(model_name: str = OLLAMA_MODEL) -> Tuple[bool, str]:
@@ -258,8 +276,9 @@ def check_ollama_status(model_name: str = OLLAMA_MODEL) -> Tuple[bool, str]:
     Check if the local Ollama instance is reachable and model is installed.
     Returns (is_ready, message).
     """
+    base_url = get_ollama_base_url()
     try:
-        req = urllib.request.Request("http://localhost:11434/api/tags", method="GET")
+        req = urllib.request.Request(f"{base_url}/api/tags", method="GET")
         with urllib.request.urlopen(req, timeout=3) as resp:
             if resp.status == 200:
                 data = json.loads(resp.read().decode())
@@ -278,7 +297,7 @@ def check_ollama_status(model_name: str = OLLAMA_MODEL) -> Tuple[bool, str]:
                     )
     except Exception:
         return False, (
-            "Ollama is not reachable at http://localhost:11434. "
+            f"Ollama is not reachable at {base_url}. "
             "Please ensure Ollama is installed and running ('ollama serve')."
         )
     return True, "Ollama check passed."
@@ -604,6 +623,27 @@ def create_rag_graph(
     return workflow.compile(checkpointer=checkpointer)
 
 
+def _is_ollama_connection_error(error: BaseException) -> bool:
+    """Detect both Linux and Windows Ollama connection failures."""
+    err = str(error).lower()
+    markers = (
+        "11434",
+        "connection refused",
+        "connection error",
+        "failed to connect",
+        "no connection could be made",
+        "actively refused",
+        "cannot connect",
+        "connection reset by peer",
+        "temporarily unavailable",
+        "name or service not known",
+        "connection aborted",
+        "failed to establish a new connection",
+        "could not connect to ollama",
+    )
+    return any(marker in err for marker in markers) or isinstance(error, ConnectionError)
+
+
 def ask_question(
     graph: Any,
     question: str,
@@ -628,9 +668,12 @@ def ask_question(
             {"messages": [HumanMessage(content=question)]},
             config=config
         )
+    except ConnectionError as e:
+        raise ConnectionError(
+            f"Could not connect to Ollama. Ensure Ollama is running and model '{OLLAMA_MODEL}' is pulled."
+        ) from e
     except Exception as e:
-        err = str(e)
-        if "11434" in err or "Connection refused" in err or "Failed to connect" in err:
+        if _is_ollama_connection_error(e):
             raise ConnectionError(
                 f"Could not connect to Ollama. Ensure Ollama is running and model '{OLLAMA_MODEL}' is pulled."
             ) from e
