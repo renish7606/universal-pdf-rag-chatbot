@@ -542,6 +542,7 @@ def safe_retrieve(
 # ============================================================
 class RAGState(TypedDict, total=False):
     messages: Annotated[list, add_messages]
+    conversation_history: List[Dict[str, str]]
     standalone_question: str
     retrieved_docs: list
     answer: str
@@ -571,13 +572,18 @@ def create_rag_graph(
     def rewrite_question_node(state: RAGState) -> Dict[str, Any]:
         messages = state.get("messages", [])
         latest = messages[-1].content if messages else ""
-        previous = messages[:-1][-6:]
+        conversation_history = state.get("conversation_history")
+        if conversation_history is None:
+            history_text = "\n".join(
+                f"{type(m).__name__}: {m.content}" for m in messages[:-1][-6:]
+            )
+        else:
+            history_text = "\n".join(
+                f"{message['role'].capitalize()}: {message['content']}"
+                for message in conversation_history[-6:]
+            )
 
-        history_text = "\n".join(
-            f"{type(m).__name__}: {m.content}" for m in previous
-        )
-
-        if not previous:
+        if not history_text:
             return {"standalone_question": latest}
 
         prompt = rewrite_prompt.format_messages(
@@ -648,7 +654,8 @@ def ask_question(
     graph: Any,
     question: str,
     thread_id: str = DEFAULT_THREAD_ID,
-    callbacks: Optional[list] = None
+    callbacks: Optional[list] = None,
+    history: Optional[List[Dict[str, str]]] = None
 ) -> Dict[str, Any]:
     """
     Execute a question against the compiled LangGraph workflow with thread memory.
@@ -664,8 +671,11 @@ def ask_question(
         config["callbacks"] = callbacks
 
     try:
+        state: Dict[str, Any] = {"messages": [HumanMessage(content=question)]}
+        if history is not None:
+            state["conversation_history"] = history
         return graph.invoke(
-            {"messages": [HumanMessage(content=question)]},
+            state,
             config=config
         )
     except ConnectionError as e:

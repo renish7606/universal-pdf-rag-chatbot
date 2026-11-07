@@ -6,7 +6,9 @@ Results are cached per PDF/configuration in evaluation/results/.
 import argparse
 import hashlib
 import json
+import os
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -55,6 +57,30 @@ def parse_judge(text):
         return None, "unparseable judge output"
 
 
+def mean_or_none(values):
+    return sum(values) / len(values) if values else None
+
+
+def write_json_atomic(path, value):
+    temporary_path = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as temporary_file:
+            temporary_path = Path(temporary_file.name)
+            json.dump(value, temporary_file, indent=2)
+            temporary_file.write("\n")
+        os.replace(temporary_path, path)
+    finally:
+        if temporary_path is not None and temporary_path.exists():
+            temporary_path.unlink()
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--pdf", required=True, type=Path)
@@ -63,12 +89,44 @@ def main():
     if not args.pdf.is_file():
         raise FileNotFoundError(args.pdf)
     questions = load_questions()
-    info = rag.setup_rag_pipeline(args.pdf, persist_dir=ROOT / "chroma_db")
+    pdf_hash = rag.compute_pdf_hash(args.pdf)
+    rag_source_hash = hashlib.sha256(Path(rag.__file__).read_bytes()).hexdigest()
+    index_configuration = {
+        "pdf": pdf_hash,
+        "embedding_model": rag.EMBEDDING_MODEL,
+        "chunk_size": rag.CHUNK_SIZE,
+        "chunk_overlap": rag.CHUNK_OVERLAP,
+        "rag_source": rag_source_hash,
+    }
+    index_signature = hashlib.sha256(
+        json.dumps(index_configuration, sort_keys=True).encode("utf-8")
+    ).hexdigest()[:12]
+    info = rag.setup_rag_pipeline(
+        args.pdf,
+        persist_dir=ROOT / "chroma_db" / "benchmark_indexes" / index_signature,
+    )
     llm, judge = rag.get_llm(), rag.get_llm(args.judge_model)
-    signature = hashlib.sha256(json.dumps({"pdf": info["pdf_hash"], "questions": questions, "model": rag.OLLAMA_MODEL, "judge": args.judge_model, "num_ctx": rag.OLLAMA_NUM_CTX, "k": rag.TOP_K}, sort_keys=True).encode()).hexdigest()[:12]
-    RESULTS_DIR.mkdir(exist_ok=True)
+    configuration = {
+        "pdf": info["pdf_hash"],
+        "questions": questions,
+        "answer_model": rag.OLLAMA_MODEL,
+        "judge_model": args.judge_model,
+        "context_window": rag.OLLAMA_NUM_CTX,
+        "embedding_model": rag.EMBEDDING_MODEL,
+        "top_k": rag.TOP_K,
+        "fetch_k": rag.FETCH_K,
+        "mmr_lambda": rag.MMR_LAMBDA,
+        "chunk_size": rag.CHUNK_SIZE,
+        "chunk_overlap": rag.CHUNK_OVERLAP,
+        "rag_source": rag_source_hash,
+        "benchmark_source": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+    }
+    signature = hashlib.sha256(
+        json.dumps(configuration, sort_keys=True).encode("utf-8")
+    ).hexdigest()[:12]
+    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     result_path = RESULTS_DIR / f"benchmark_{info['pdf_hash']}_{signature}.json"
-    rows = json.loads(result_path.read_text()) if result_path.exists() else []
+    rows = json.loads(result_path.read_text(encoding="utf-8")) if result_path.exists() else []
     completed = {r["index"] for r in rows}
     for index, item in enumerate(questions, 1):
         if index in completed:
@@ -81,13 +139,48 @@ def main():
         judge_text, _, judge_seconds = collect_stream(judge, JUDGE_PROMPT.format_messages(question=item["question"], reference=item["reference_answer"], context=rag.format_context(docs), answer=answer))
         score, reason = parse_judge(judge_text)
         rows.append({"index": index, "category": item["category"], "expected_pages": item["expected_pages"], "retrieved_pages": pages, "hit_at_8": bool(set(pages) & set(item["expected_pages"])) if item["expected_pages"] else None, "answer": answer, "judge_score": score, "judge_reason": reason, "retrieval_seconds": retrieval_seconds, "time_to_first_token_seconds": ttft, "generation_seconds": generation_seconds, "judge_seconds": judge_seconds})
-        result_path.write_text(json.dumps(rows, indent=2), encoding="utf-8")
+        write_json_atomic(result_path, rows)
         print(f"[{index}/60] saved")
     answerable = [r for r in rows if r["hit_at_8"] is not None]
     judged = [r for r in rows if r["judge_score"] is not None]
-    summary = {"row": "Row 0 — 4096-token context baseline", "configuration": {"model": rag.OLLAMA_MODEL, "judge_model": args.judge_model, "context_window": rag.OLLAMA_NUM_CTX, "top_k": rag.TOP_K}, "denominators": {"retrieval_hit_rate_at_8": len(answerable), "answer_metrics": len(judged), "latency": len(rows)}, "metrics": {"retrieval_hit_rate_at_8": sum(r["hit_at_8"] for r in answerable) / len(answerable), "average_answer_score": sum(r["judge_score"] for r in judged) / len(judged), "fully_correct_and_grounded": sum(r["judge_score"] == 2 for r in judged) / len(judged)}, "latency_seconds": {key: sum(r[key] for r in rows) / len(rows) for key in ("retrieval_seconds", "time_to_first_token_seconds", "generation_seconds")}, "judge_note": "Same-model judge: not independent." if args.judge_model == rag.OLLAMA_MODEL else "Separate local judge model."}
+    summary = {
+        "row": "Row 0 — 4096-token context baseline",
+        "configuration": {
+            "model": rag.OLLAMA_MODEL,
+            "judge_model": args.judge_model,
+            "context_window": rag.OLLAMA_NUM_CTX,
+            "top_k": rag.TOP_K,
+        },
+        "denominators": {
+            "retrieval_hit_rate_at_8": len(answerable),
+            "answer_metrics": len(judged),
+            "latency": len(rows),
+        },
+        "metrics": {
+            "retrieval_hit_rate_at_8": mean_or_none(
+                [r["hit_at_8"] for r in answerable]
+            ),
+            "average_answer_score": mean_or_none(
+                [r["judge_score"] for r in judged]
+            ),
+            "fully_correct_and_grounded": mean_or_none(
+                [r["judge_score"] == 2 for r in judged]
+            ),
+        },
+        "latency_seconds": {
+            key: mean_or_none([r[key] for r in rows])
+            for key in (
+                "retrieval_seconds",
+                "time_to_first_token_seconds",
+                "generation_seconds",
+            )
+        },
+        "judge_note": "Same-model judge: not independent."
+        if args.judge_model == rag.OLLAMA_MODEL
+        else "Separate local judge model.",
+    }
     summary_path = result_path.with_name(result_path.stem + "_summary.json")
-    summary_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
+    write_json_atomic(summary_path, summary)
     print(json.dumps(summary, indent=2))
 
 

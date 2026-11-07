@@ -1,0 +1,8 @@
+.venv
+.git
+__pycache__
+*.py[cod]
+chroma_db
+data/uploads
+*.pdf
+.ipynb_checkpoints

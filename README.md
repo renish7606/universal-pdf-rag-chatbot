@@ -83,6 +83,7 @@ flowchart TD
 | **📁 Arbitrary PDF Ingestion** | Ingest any document (textbooks, reports, research papers, documentation) without modifying code. |
 | **⚡ Smart DB Isolation & Caching** | Each PDF is fingerprinted with a 12-character SHA-256 hash. ChromaDB collections remain isolated to prevent cross-document contamination, and re-indexing is skipped if already cached. |
 | **🧠 LangGraph Multi-Turn Memory** | Checkpointer state management automatically retains context across turns, enabling fluid follow-up inquiries. |
+| **💬 Persistent Chat History** | Conversations are saved locally with their PDF name, messages, and citations. Start a new chat without deleting older conversations, then reopen one to continue. |
 | **🎯 Redundancy Reduction (MMR)** | Maximal Marginal Relevance balances relevance with diversity across retrieved chunks. |
 | **🛑 Responsive Stop Generation** | Live token callbacks serve as active execution yield points, allowing Streamlit's **Stop** button to interrupt generation in milliseconds. |
 | **📑 Verified Page Citations** | Preserves true 1-based page metadata, providing direct source verification for every generated claim. |
@@ -130,19 +131,63 @@ RAG/
 │
 ├── app.py                     # Streamlit web application & streaming UI
 ├── rag.py                     # Core RAG engine, vectorstore manager & LangGraph workflow
+├── chat_store.py              # SQLite persistence for chat history
 │
 ├── evaluation/
 │   └── evaluation.ipynb       # 60-question evaluation benchmark & analysis
 │
 ├── data/
-│   └── uploads/               # Temporary runtime storage for uploaded PDFs
+│   ├── uploads/               # Uploaded PDFs retained for reopening conversations
+│   └── chat_history.db        # Local conversation metadata and messages
 │
 ├── chroma_db/                 # Persistent vector databases isolated by document hash
 │
 ├── requirements.txt           # Environment dependencies
+├── Dockerfile                 # Docker image for the Streamlit app
+├── compose.yaml               # Streamlit app and Ollama services
+├── .dockerignore              # Files excluded from the Docker build
 ├── README.md                  # Project documentation & architecture
 └── .gitignore                 # Version control rules
 ```
+
+---
+
+## 🐳 Quick Start Guide
+
+Docker runs the chatbot and its dependencies in containers, so you do not need to install the Python packages directly on your computer. This setup uses one container for the Streamlit app and another for Ollama.
+
+1. Install and start [Docker Desktop](https://www.docker.com/products/docker-desktop/).
+2. In PowerShell, change to the project folder:
+
+   ```powershell
+   cd D:\PDF_Chatbot
+   ```
+
+3. Build the app image and start both containers:
+
+   ```powershell
+   docker compose up --build -d
+   ```
+
+4. Download the chat model into the Ollama container. This is a one-time download; the Compose volume preserves it:
+
+   ```powershell
+   docker compose exec ollama ollama pull llama3.2:3b
+   ```
+
+5. Open [http://localhost:8501](http://localhost:8501), upload a PDF, and process it.
+
+The first build and model downloads can take several minutes. The app downloads its Hugging Face embedding model on first use as well. Uploaded PDFs and ChromaDB data are stored in the project's `data` and `chroma_db` folders; Ollama and Hugging Face model files are kept in Docker volumes.
+
+Conversations are saved locally in `data/chat_history.db`. Use **New chat** to start a separate conversation without deleting earlier chats. Select a saved conversation in the sidebar to restore its messages and continue asking questions about its PDF. Uploaded PDFs are kept under content-based names in `data/uploads/`; starting a new chat does not remove them or the ChromaDB index.
+
+To stop the containers without deleting their data:
+
+```powershell
+docker compose down
+```
+
+Run `docker compose up -d` to start them again. To remove the containers and their persisted Docker volumes, run `docker compose down -v`; this deletes the downloaded models and cache.
 
 ---
 

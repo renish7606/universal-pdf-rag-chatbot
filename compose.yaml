@@ -1,0 +1,22 @@
+services:
+  app:
+    build: .
+    ports:
+      - "8501:8501"
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+    volumes:
+      - ./data:/app/data
+      - ./chroma_db:/app/chroma_db
+      - huggingface-cache:/root/.cache/huggingface
+    depends_on:
+      - ollama
+
+  ollama:
+    image: ollama/ollama:latest
+    volumes:
+      - ollama-models:/root/.ollama
+
+volumes:
+  ollama-models:
+  huggingface-cache:

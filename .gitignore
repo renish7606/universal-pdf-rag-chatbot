@@ -4,5 +4,6 @@ __pycache__/
 .env
 chroma_db/
 data/uploads/
+data/chat_history.db
 /ml_ebook.pdf
 .ipynb_checkpoints/

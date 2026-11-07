@@ -23,6 +23,8 @@ try:
 except Exception:
     pass
 
+import hashlib
+import html
 import uuid
 from pathlib import Path
 import streamlit as st
@@ -38,6 +40,7 @@ except ImportError:
             pass
 
 import rag
+import chat_store
 
 # -------------------------------------------------------------
 # STREAMING CALLBACK HANDLER (ENABLES INSTANT STOP BUTTON)
@@ -175,17 +178,36 @@ st.markdown("""
         color: #818CF8;
         font-weight: 500;
     }
+    .history-heading {
+        font-size: 0.78rem;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        opacity: 0.65;
+        margin: 0.25rem 0 0.5rem 0;
+    }
+    .history-file {
+        font-size: 0.75rem;
+        opacity: 0.6;
+        overflow-wrap: anywhere;
+        margin: -0.5rem 0 0.55rem 0.65rem;
+    }
 </style>
 """, unsafe_allow_html=True)
 
 # -------------------------------------------------------------
 # SESSION STATE INITIALIZATION
 # -------------------------------------------------------------
+chat_store.initialize()
+
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
 if "thread_id" not in st.session_state:
-    st.session_state.thread_id = f"session-{uuid.uuid4().hex[:8]}"
+    st.session_state.thread_id = f"session-{uuid.uuid4().hex}"
+
+if "active_chat_id" not in st.session_state:
+    st.session_state.active_chat_id = None
 
 if "rag_graph" not in st.session_state:
     st.session_state.rag_graph = None
@@ -195,6 +217,54 @@ if "doc_info" not in st.session_state:
 
 UPLOAD_DIR = Path("data/uploads")
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+
+if st.session_state.active_chat_id is None and st.session_state.doc_info:
+    active_info = st.session_state.doc_info
+    active_chat = chat_store.create_chat(active_info["filename"], active_info["hash"])
+    st.session_state.active_chat_id = active_chat["id"]
+    st.session_state.thread_id = active_chat["id"]
+    for saved_message in st.session_state.messages:
+        chat_store.add_message(
+            active_chat["id"],
+            saved_message["role"],
+            saved_message["content"],
+            saved_message.get("sources", []),
+        )
+
+
+def load_chat(chat_id):
+    chat = chat_store.get_chat(chat_id)
+    if chat is None:
+        st.error("This chat is no longer available.")
+        return
+    pdf_path = UPLOAD_DIR / f"{chat['pdf_hash']}.pdf"
+    if not pdf_path.is_file():
+        st.error(
+            f"The PDF for this chat is missing: {chat['pdf_name']}. "
+            "Restore the PDF to the data/uploads folder to reopen this conversation."
+        )
+        return
+    try:
+        with st.spinner(f"Opening chat for {chat['pdf_name']}..."):
+            pipeline_info = rag.setup_rag_pipeline(
+                pdf_path=pdf_path,
+                persist_dir="chroma_db",
+            )
+        st.session_state.active_chat_id = chat["id"]
+        st.session_state.thread_id = chat["id"]
+        st.session_state.messages = chat_store.get_messages(chat["id"])
+        st.session_state.rag_graph = pipeline_info["graph"]
+        st.session_state.doc_info = {
+            "filename": chat["pdf_name"],
+            "pages": pipeline_info["num_pages"],
+            "chunks": pipeline_info["num_chunks"],
+            "stored_vectors": pipeline_info["stored_vectors"],
+            "hash": pipeline_info["pdf_hash"],
+            "cached": pipeline_info["is_cached"],
+        }
+    except (FileNotFoundError, ValueError, ConnectionError, RuntimeError) as error:
+        st.error(f"Could not reopen this chat: {error}")
+
 
 # -------------------------------------------------------------
 # SIDEBAR - DOCUMENT MANAGEMENT & SETTINGS
@@ -217,10 +287,11 @@ with st.sidebar:
         if uploaded_file is None:
             st.warning("Please choose a PDF file first.")
         else:
-            saved_pdf_path = UPLOAD_DIR / uploaded_file.name
+            pdf_bytes = uploaded_file.getvalue()
+            pdf_hash = hashlib.sha256(pdf_bytes).hexdigest()[:12]
+            saved_pdf_path = UPLOAD_DIR / f"{pdf_hash}.pdf"
             try:
-                with open(saved_pdf_path, "wb") as f:
-                    f.write(uploaded_file.getbuffer())
+                saved_pdf_path.write_bytes(pdf_bytes)
 
                 with st.spinner("Indexing PDF..."):
                     pipeline_info = rag.setup_rag_pipeline(
@@ -238,9 +309,13 @@ with st.sidebar:
                         "cached": pipeline_info["is_cached"]
                     }
 
-                    # Reset conversation for new document
+                    chat = chat_store.create_chat(
+                        pdf_name=uploaded_file.name,
+                        pdf_hash=pipeline_info["pdf_hash"],
+                    )
+                    st.session_state.active_chat_id = chat["id"]
+                    st.session_state.thread_id = chat["id"]
                     st.session_state.messages = []
-                    st.session_state.thread_id = f"session-{uuid.uuid4().hex[:8]}"
 
                 if pipeline_info["is_cached"]:
                     st.success("Reused existing index.")
@@ -267,7 +342,7 @@ with st.sidebar:
 
         st.markdown(f"""
         <div class="doc-card">
-            <div class="doc-filename">📑 {info['filename']}</div>
+            <div class="doc-filename">📑 {html.escape(info['filename'])}</div>
             <div class="meta-pills">
                 <span class="meta-pill">{pages_label}</span>
                 <span class="meta-pill">{info['stored_vectors']} Chunks</span>
@@ -278,10 +353,40 @@ with st.sidebar:
 
     # Chat controls
     st.divider()
-    if st.button("🗑️ Clear Chat History", use_container_width=True):
+    st.markdown('<div class="history-heading">Your chats</div>', unsafe_allow_html=True)
+    can_start_chat = st.session_state.doc_info is not None
+    if st.button(
+        "＋  New chat",
+        use_container_width=True,
+        disabled=not can_start_chat,
+        type="primary",
+    ):
+        info = st.session_state.doc_info
+        chat = chat_store.create_chat(info["filename"], info["hash"])
+        st.session_state.active_chat_id = chat["id"]
+        st.session_state.thread_id = chat["id"]
         st.session_state.messages = []
-        st.session_state.thread_id = f"session-{uuid.uuid4().hex[:8]}"
-        st.rerun()
+
+    chats = chat_store.list_chats()
+    if chats:
+        with st.expander(f"Recent conversations · {len(chats)}", expanded=True):
+            for chat in chats:
+                is_active = chat["id"] == st.session_state.active_chat_id
+                label = chat["title"] or chat["pdf_name"]
+                if st.button(
+                    f"{'● ' if is_active else ''}{label}",
+                    key=f"open_chat_{chat['id']}",
+                    use_container_width=True,
+                    type="secondary",
+                ):
+                    load_chat(chat["id"])
+                    st.rerun()
+                st.markdown(
+                    f'<div class="history-file">📄 {html.escape(chat["pdf_name"])}</div>',
+                    unsafe_allow_html=True,
+                )
+    else:
+        st.caption("Your saved conversations will appear here.")
 
     # System Status Expander
     with st.expander("ℹ️ System Status", expanded=False):
@@ -348,19 +453,35 @@ if user_question:
         # Check for natural exit/quit inputs
         if user_question.strip().lower() in {"exit", "quit"}:
             st.session_state.messages.append({"role": "user", "content": user_question})
+            chat_store.add_message(
+                st.session_state.active_chat_id,
+                "user",
+                user_question,
+            )
             with st.chat_message("user"):
                 st.markdown(user_question)
             with st.chat_message("assistant"):
-                exit_reply = "Chat session ended. Click **Clear Chat History** or upload another PDF to begin a new session."
+                exit_reply = "Chat session ended. Start a new chat or select an earlier conversation from the sidebar."
                 st.markdown(exit_reply)
                 st.session_state.messages.append({
                     "role": "assistant",
                     "content": exit_reply,
                     "sources": []
                 })
+                chat_store.add_message(
+                    st.session_state.active_chat_id,
+                    "assistant",
+                    exit_reply,
+                )
         else:
             # Display user message
+            prior_messages = list(st.session_state.messages)
             st.session_state.messages.append({"role": "user", "content": user_question})
+            chat_store.add_message(
+                st.session_state.active_chat_id,
+                "user",
+                user_question,
+            )
             with st.chat_message("user"):
                 st.markdown(user_question)
 
@@ -375,11 +496,19 @@ if user_question:
                             graph=st.session_state.rag_graph,
                             question=user_question,
                             thread_id=st.session_state.thread_id,
-                            callbacks=[stream_handler]
+                            callbacks=[stream_handler],
+                            history=[
+                                {"role": message["role"], "content": message["content"]}
+                                for message in prior_messages
+                                if message["role"] in {"user", "assistant"}
+                            ],
                         )
 
                         answer = result.get("answer", stream_handler.text or "No answer generated.")
-                        sources = result.get("sources", [])
+                        sources = [
+                            (st.session_state.doc_info["filename"], page)
+                            for _, page in result.get("sources", [])
+                        ]
 
                         # Final clean render (removes the blinking cursor ▌)
                         placeholder.markdown(answer)
@@ -390,24 +519,59 @@ if user_question:
                                     st.markdown(f"• **{fname}** — `Page {page}`")
 
                         # Record to chat history
-                        st.session_state.messages.append({
+                        assistant_message = {
                             "role": "assistant",
                             "content": answer,
                             "sources": sources
-                        })
+                        }
+                        st.session_state.messages.append(assistant_message)
+                        chat_store.add_message(
+                            st.session_state.active_chat_id,
+                            "assistant",
+                            answer,
+                            sources,
+                        )
 
                     except StopException:
                         # User clicked the top-right 'Stop' button in Streamlit
                         partial = stream_handler.text.strip()
                         msg = (partial + "\n\n*(Generation stopped by user)*") if partial else "*(Generation stopped by user)*"
                         placeholder.markdown(msg)
-                        st.session_state.messages.append({
+                        assistant_message = {
                             "role": "assistant",
                             "content": msg,
                             "sources": []
-                        })
+                        }
+                        st.session_state.messages.append(assistant_message)
+                        chat_store.add_message(
+                            st.session_state.active_chat_id,
+                            "assistant",
+                            msg,
+                        )
                         st.stop()
                     except ConnectionError as e:
                         st.error(f"LLM Connection Error: {e}")
+                        error_message = f"I couldn't answer this question because Ollama is unavailable: {e}"
+                        st.session_state.messages.append({
+                            "role": "assistant",
+                            "content": error_message,
+                            "sources": [],
+                        })
+                        chat_store.add_message(
+                            st.session_state.active_chat_id,
+                            "assistant",
+                            error_message,
+                        )
                     except Exception as e:
                         st.error(f"Error answering question: {e}")
+                        error_message = f"I couldn't answer this question: {e}"
+                        st.session_state.messages.append({
+                            "role": "assistant",
+                            "content": error_message,
+                            "sources": [],
+                        })
+                        chat_store.add_message(
+                            st.session_state.active_chat_id,
+                            "assistant",
+                            error_message,
+                        )
